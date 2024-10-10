@@ -2,5 +2,6 @@
 /.build/
 /.swiftpm/
 /.vscode/
+/.VSCodeCounter/
 Tests/Resources/testFiles/*
 !Tests/Resources/testFiles/test.*

@@ -1,0 +1,9 @@
+module CFFmpeg [system] {
+    header "/opt/homebrew/include/libavformat/avformat.h"
+    header "/opt/homebrew/include/libavcodec/avcodec.h"
+    header "/opt/homebrew/include/libavutil/avutil.h"
+    link "avformat"
+    link "avcodec"
+    link "avutil"
+    export *
+}

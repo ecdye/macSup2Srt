@@ -11,10 +11,17 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0")
     ],
     targets: [
+        .systemLibrary(
+            name: "CFFmpeg",
+            pkgConfig: "libavformat libavcodec libavutil",
+            providers: [
+                .brew(["ffmpeg"])
+            ]),
         .executableTarget(
             name: "macSubtitleOCR",
             dependencies: [
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                "CFFmpeg"
             ]),
         .testTarget(
             name: "macSubtitleOCRTests",

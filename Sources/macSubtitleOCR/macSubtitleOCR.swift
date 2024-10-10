@@ -27,6 +27,9 @@ struct macSubtitleOCR: ParsableCommand {
     @Option(wrappedValue: "en", help: "The input image language(s)")
     var language: String
 
+    @Flag(help: "Use internal decoder (experimental)")
+    var internalDecoder = false
+
     @Flag(help: "Save image files for subtitle track (optional)")
     var saveImages = false
 
@@ -50,33 +53,39 @@ struct macSubtitleOCR: ParsableCommand {
         var results: [macSubtitleOCRResult] = []
         let outputDirectory = URL(fileURLWithPath: outputDirectory)
 
-        if input.hasSuffix(".sub") || input.hasSuffix(".idx") {
-            let sub = try VobSub(
-                input.replacingOccurrences(of: ".idx", with: ".sub"),
-                input.replacingOccurrences(of: ".sub", with: ".idx"))
-            let result = try processSubtitles(subtitles: sub.subtitles, trackNumber: 0)
-            results.append(result)
-        } else if input.hasSuffix(".mkv") {
-            let mkvStream = MKVSubtitleExtractor(filePath: input)
-            try mkvStream.parseTracks(codec: "S_HDMV/PGS")
-            for track in mkvStream.tracks {
-                logger.debug("Found subtitle track: \(track.trackNumber), Codec: \(track.codecId)")
-                if saveSubtitleFile {
-                    intermediateFiles[track.trackNumber] = try mkvStream.getSubtitleTrackData(
-                        trackNumber: track.trackNumber,
-                        outputDirectory: outputDirectory)!
+        if internalDecoder {
+            if input.hasSuffix(".sub") || input.hasSuffix(".idx") {
+                let sub = try VobSub(
+                    input.replacingOccurrences(of: ".idx", with: ".sub"),
+                    input.replacingOccurrences(of: ".sub", with: ".idx"))
+                let result = try processSubtitles(subtitles: sub.subtitles, trackNumber: 0)
+                results.append(result)
+            } else if input.hasSuffix(".mkv") {
+                let mkvStream = MKVSubtitleExtractor(filePath: input)
+                try mkvStream.parseTracks(codec: "S_HDMV/PGS")
+                for track in mkvStream.tracks {
+                    logger.debug("Found subtitle track: \(track.trackNumber), Codec: \(track.codecId)")
+                    if saveSubtitleFile {
+                        intermediateFiles[track.trackNumber] = try mkvStream.getSubtitleTrackData(
+                            trackNumber: track.trackNumber,
+                            outputDirectory: outputDirectory)!
+                    }
+
+                    // Open the PGS data stream
+                    let PGS = try PGS(mkvStream.tracks[track.trackNumber].trackData)
+
+                    let result = try processSubtitles(subtitles: PGS.subtitles, trackNumber: track.trackNumber)
+                    results.append(result)
                 }
-
+            } else if input.hasSuffix(".sup") {
                 // Open the PGS data stream
-                let PGS = try PGS(mkvStream.tracks[track.trackNumber].trackData)
-
-                let result = try processSubtitles(subtitles: PGS.subtitles, trackNumber: track.trackNumber)
+                let PGS = try PGS(URL(fileURLWithPath: input))
+                let result = try processSubtitles(subtitles: PGS.subtitles, trackNumber: 0)
                 results.append(result)
             }
-        } else if input.hasSuffix(".sup") {
-            // Open the PGS data stream
-            let PGS = try PGS(URL(fileURLWithPath: input))
-            let result = try processSubtitles(subtitles: PGS.subtitles, trackNumber: 0)
+        } else {
+            let ffmpeg = try FFmpeg(input)
+            let result = try processSubtitles(subtitles: ffmpeg.subtitles, trackNumber: 0)
             results.append(result)
         }
 
@@ -138,6 +147,11 @@ struct macSubtitleOCR: ParsableCommand {
             if subtitle.imageWidth == 0, subtitle.imageHeight == 0 {
                 logger.debug("Skipping subtitle index \(subIndex) with empty image data!")
                 continue
+            }
+
+            if subIndex < subtitles.count, subtitles[subIndex].startTimestamp! <= subtitle.endTimestamp! {
+                logger.warning("Fixing subtitle index \(subIndex) end timestamp!")
+                subtitle.endTimestamp = subtitles[subIndex].startTimestamp! - 0.1
             }
 
             guard let subImage = subtitle.createImage()

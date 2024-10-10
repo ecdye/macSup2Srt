@@ -18,6 +18,7 @@ For more details on performance, refer to the [Accuracy](#accuracy) section belo
 - Export `.png` images of subtitles for manual correction of OCR output.
 - Use the macOS OCR engine's language recognition feature to enhance accuracy by validating character sequences as real words.
 - Export raw JSON output from the OCR engine for further analysis.
+- Experimental internal decoder for development (mostly working, VobSub gives occasional errors)
 
 #### Supported Formats
 
@@ -28,10 +29,12 @@ For more details on performance, refer to the [Accuracy](#accuracy) section belo
 
 > [!IMPORTANT]
 > This project requires Swift 6 to compile and run correctly.
+> This project also requires FFmpeg to be installed on your system.
 
 To build macSubtitleOCR, follow these steps:
 
 ``` shell
+brew install ffmpeg
 git clone https://github.com/ecdye/macSubtitleOCR
 cd macSubtitleOCR
 swift build

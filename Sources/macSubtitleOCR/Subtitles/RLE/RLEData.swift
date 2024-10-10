@@ -128,7 +128,7 @@ struct RLEData {
                 }
                 if y > (height / 2), height % 2 != 0, !corrected {
                     corrected = true
-                    decodedLines.removeLast(width * 2 * evenOffset!)
+                    decodedLines.removeLast(width * 2 * (evenOffset! - 1))
                 }
             }
 

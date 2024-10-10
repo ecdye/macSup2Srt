@@ -19,10 +19,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install FFmpeg
+        run: brew install ffmpeg
+
       - name: Select Xcode
         uses: mxcl/xcodebuild@v3
         with:
-          xcode: 16.0
           swift: 6.0
           action: none
 
@@ -45,10 +47,12 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Install FFmpeg
+      run: brew install ffmpeg
+
     - name: Select Xcode
       uses: mxcl/xcodebuild@v3
       with:
-        xcode: 16.0
         swift: 6.0
         action: none
 
