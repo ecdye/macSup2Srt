@@ -40,8 +40,8 @@ struct SRT {
 
         for subtitle in subtitles {
             fixEndTimestamp(of: subtitle)
-            let startTime = formatTime(subtitle.startTimestamp!)
-            let endTime = formatTime(subtitle.endTimestamp!)
+            let startTime = subtitle.startTimestamp!.srtTimestamp
+            let endTime = subtitle.endTimestamp!.srtTimestamp
 
             srtContent += "\(subtitle.index)\n"
             srtContent += "\(startTime) --> \(endTime)\n"
@@ -69,14 +69,5 @@ struct SRT {
                 subtitle.endTimestamp = subtitle.startTimestamp! + 5
             }
         }
-    }
-
-    private func formatTime(_ time: TimeInterval) -> String {
-        let hours = Int(time) / 3600
-        let minutes = (Int(time) % 3600) / 60
-        let seconds = Int(time) % 60
-        let milliseconds = Int((time - TimeInterval(Int(time))) * 1000)
-
-        return String(format: "%02d:%02d:%02d,%03d", hours, minutes, seconds, milliseconds)
     }
 }

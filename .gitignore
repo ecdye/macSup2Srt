@@ -6,5 +6,6 @@
 /.index-build/
 Tests/Resources/*
 !Tests/Resources/sintel*.*
+!Tests/Resources/ocr-samples.json
 !Tests/Resources/README.md
 Session.vim

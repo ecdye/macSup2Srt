@@ -43,12 +43,24 @@ struct RLEData {
             var run = 1
 
             if color == 0x00 {
-                let flags = iterator.next()!
+                guard let flags = iterator.next() else {
+                    throw macSubtitleOCRError.invalidRLE("Ran out of RLE data reading a run-length flag.")
+                }
                 run = Int(flags & 0x3F)
                 if flags & 0x40 != 0 {
-                    run = (run << 8) + Int(iterator.next()!)
+                    guard let extendedRun = iterator.next() else {
+                        throw macSubtitleOCRError.invalidRLE("Ran out of RLE data reading an extended run length.")
+                    }
+                    run = (run << 8) + Int(extendedRun)
                 }
-                color = (flags & 0x80) != 0 ? iterator.next()! : 0
+                if flags & 0x80 != 0 {
+                    guard let runColor = iterator.next() else {
+                        throw macSubtitleOCRError.invalidRLE("Ran out of RLE data reading a run color.")
+                    }
+                    color = runColor
+                } else {
+                    color = 0
+                }
             }
 
             // Ensure run is valid and doesn't exceed pixel buffer
@@ -74,92 +86,63 @@ struct RLEData {
         return image
     }
 
-    mutating func decodeVobSub() throws -> Data {
-        if data.isEmpty || width <= 0 || height <= 0 {
-            return data
+    func decodeVobSub() throws -> Data {
+        guard !data.isEmpty, width > 0, height > 0 else { return data }
+        let (pixelCount, overflow) = width.multipliedReportingOverflow(by: height)
+        guard !overflow else {
+            throw macSubtitleOCRError.invalidRLE("VobSub image dimensions overflow.")
         }
-        var nibbles = Data()
-        var decodedLines = Data()
-        decodedLines.reserveCapacity(Int(width * height))
-        nibbles.reserveCapacity(data.count * 2)
+        let bytes = Array(data)
+        var image = [UInt8](repeating: 0, count: pixelCount)
 
-        // Convert RLE data to nibbles
-        for byte in data {
-            nibbles.append(byte >> 4)
-            nibbles.append(byte & 0x0F)
-        }
+        // DVD subpictures encode alternating rows in two independently byte-aligned
+        // fields. Their offsets are authoritative: padding between fields is not
+        // pixel data, and an odd-height image has one extra row in its first field.
+        for field in 0 ..< min(2, height) {
+            guard let offset = field == 0 ? evenOffset : oddOffset,
+                  offset >= 0, offset < bytes.count
+            else {
+                throw macSubtitleOCRError.invalidRLE("Invalid VobSub field offset.")
+            }
+            var position = offset * 2
+            func readNibble() throws -> Int {
+                guard position / 2 < bytes.count else {
+                    throw macSubtitleOCRError.invalidRLE("Insufficient VobSub RLE data.")
+                }
+                let byte = bytes[position / 2]
+                let value = position % 2 == 0 ? byte >> 4 : byte & 0x0F
+                position += 1
+                return Int(value)
+            }
 
-        var i = 0
-        var y = 0
-        var x = 0
-        var currentNibbles: [UInt8?] = [nibbles[i], nibbles[i + 1]]
-        i += 2
-        while currentNibbles[1] != nil, y < height {
-            var nibble = getNibble(currentNibbles: &currentNibbles, nibbles: nibbles, i: &i)
-
-            if nibble < 0x04 {
-                if nibble == 0x00 {
-                    nibble = nibble << 4 | getNibble(currentNibbles: &currentNibbles, nibbles: nibbles, i: &i)
-                    if nibble < 0x04 {
-                        nibble = nibble << 4 | getNibble(currentNibbles: &currentNibbles, nibbles: nibbles, i: &i)
+            for y in stride(from: field, to: height, by: 2) {
+                var x = 0
+                while x < width {
+                    var code = try readNibble()
+                    if code < 0x04 {
+                        code = try (code << 4) | readNibble()
+                        if code < 0x10 {
+                            code = try (code << 4) | readNibble()
+                            if code < 0x40 {
+                                code = try (code << 4) | readNibble()
+                            }
+                        }
                     }
+                    let color = UInt8(code & 0x03)
+                    let run = code < 4 ? width - x : code >> 2
+                    guard run <= width - x else {
+                        throw macSubtitleOCRError.invalidRLE("VobSub run exceeds the row width.")
+                    }
+                    for column in x ..< x + run {
+                        image[y * width + column] = color
+                    }
+                    x += run
                 }
-                nibble = nibble << 4 | getNibble(currentNibbles: &currentNibbles, nibbles: nibbles, i: &i)
+                // A row always starts on a byte boundary, even when its last run
+                // used only the high nibble of a byte.
+                position = (position + 1) & ~1
             }
-            let color = UInt8(nibble & 0x03)
-            var run = Int(nibble >> 2)
-
-            if decodedLines.count % width == 0, color != 0, run == 15 {
-                i -= 5
-                currentNibbles = [nibbles[i], nibbles[i + 1]]
-                i += 2
-                continue
-            }
-            x += Int(run)
-
-            if run == 0 || x >= width {
-                run += width - x
-                x = 0
-                y += 1
-                if i % 2 != 0 {
-                    _ = getNibble(currentNibbles: &currentNibbles, nibbles: nibbles, i: &i)
-                }
-                if y >= (height / 2), i / 2 < oddOffset!, evenOffset != 0 {
-                    continue // Skip extra lines until we reach the oddOffset
-                }
-            }
-
-            decodedLines.append(contentsOf: repeatElement(color, count: run))
         }
-        height = decodedLines.count / width
-
-        return interleaveLines(decodedLines)
-    }
-
-    private func interleaveLines(_ decodedLines: Data) -> Data {
-        var finalImage = Data()
-        finalImage.reserveCapacity(Int(width * height))
-
-        let halfHeight = height / 2
-        let heightOdd = height % 2 != 0
-        for step in stride(from: 0, to: halfHeight, by: 1) {
-            finalImage.append(decodedLines.subdata(in: step * width ..< step * width + width))
-            let oddStepStart = (halfHeight + step + 1) * width
-            let evenStepStart = (halfHeight + step) * width
-            let start = heightOdd ? oddStepStart : evenStepStart
-            let end = heightOdd ? oddStepStart + width : evenStepStart + width
-            finalImage.append(decodedLines.subdata(in: start ..< end))
-        }
-        if heightOdd {
-            finalImage.append(decodedLines.subdata(in: halfHeight * width ..< halfHeight * width + width))
-        }
-        return finalImage
-    }
-
-    private func getNibble(currentNibbles: inout [UInt8?], nibbles: Data, i: inout Int) -> UInt16 {
-        let nibble = UInt16(currentNibbles.removeFirst()!)
-        nibbles.count <= i ? currentNibbles.append(nil) : currentNibbles.append(nibbles[i])
-        i += 1
-        return nibble
+        return Data(image)
     }
 }

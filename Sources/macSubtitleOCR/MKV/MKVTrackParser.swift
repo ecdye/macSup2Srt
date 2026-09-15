@@ -118,7 +118,9 @@ class MKVTrackParser: MKVFileHandler {
             default:
                 fileHandle.seek(toFileOffset: fileHandle.offsetInFile + elementSize)
             }
-            if trackNumber != nil, trackType != nil, codecID != nil { break }
+            if trackNumber != nil, trackType != nil, codecID != nil {
+                break
+            }
         }
 
         if let trackNumber, let codecID {
@@ -137,7 +139,9 @@ class MKVTrackParser: MKVFileHandler {
                     default:
                         fileHandle.seek(toFileOffset: fileHandle.offsetInFile + elementSize)
                     }
-                    if codecPrivate[trackNumber] != nil { break }
+                    if codecPrivate[trackNumber] != nil {
+                        break
+                    }
                 }
             }
             if codecs.contains(codecID) {
@@ -230,7 +234,8 @@ class MKVTrackParser: MKVFileHandler {
 
     // swiftformat:disable all
     private func buildVobSubHeader(pts: [UInt8], segmentSize: Int) -> Data {
-        let pesLength = withUnsafeBytes(of: UInt16(min(segmentSize, 2028)).bigEndian) { Array($0) }
+        // PES length includes the flags, header length, PTS and stream ID after it.
+        let pesLength = withUnsafeBytes(of: UInt16(min(segmentSize, 2019) + 9).bigEndian) { Array($0) }
         var vobSubHeader = Data()
         vobSubHeader.reserveCapacity(segmentSize + 512)
         vobSubHeader = Data([0x00, 0x00, 0x01, 0xBA,                  // PS packet start code
@@ -250,7 +255,8 @@ class MKVTrackParser: MKVFileHandler {
     private func appendVobSubSegments(segmentSize: Int, buffer: inout Data) {
         var remainingSize = segmentSize
         while remainingSize > 0 {
-            let nextSegmentSize = min(remainingSize, 2028)
+            // Continuation packets have three header bytes and a stream ID.
+            let nextSegmentSize = min(remainingSize, 2024) + 4
             let pesLength = withUnsafeBytes(of: UInt16(nextSegmentSize).bigEndian) { Array($0) }
             buffer.append(contentsOf: [0x00, 0x00, 0x01, 0xBA,              // PS packet start code
                                        0x00, 0x00, 0x00, 0x00, 0x00, 0x0,   // Null system clock reference

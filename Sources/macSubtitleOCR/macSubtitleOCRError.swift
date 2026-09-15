@@ -15,4 +15,5 @@ enum macSubtitleOCRError: Error {
     case invalidRLE(_ string: String)
     case invalidODSDataLength(length: Int)
     case invalidPDSDataLength(length: Int)
+    case invalidODSDimensions(_ string: String)
 }

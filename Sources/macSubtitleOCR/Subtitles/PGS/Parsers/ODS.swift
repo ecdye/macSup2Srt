@@ -18,17 +18,21 @@ struct ODS {
     // MARK: - Lifecycle
 
     init(_ buffer: UnsafeRawBufferPointer, _ offset: Int, _ segmentLength: Int) throws {
-        guard segmentLength > 11 else {
-            throw macSubtitleOCRError.invalidODSDataLength(length: segmentLength)
-        }
+        try ODS.validate(buffer, offset, segmentLength)
         try parseODS(buffer, offset, segmentLength)
     }
 
     mutating func appendSegment(_ buffer: UnsafeRawBufferPointer, _ offset: Int, _ segmentLength: Int) throws {
-        guard segmentLength > 11 else {
+        try ODS.validate(buffer, offset, segmentLength)
+        try parseODS(buffer, offset, segmentLength)
+    }
+
+    /// A segment must carry a full header and lie entirely inside the buffer, otherwise `parseODS`
+    /// reads past the end of the stream.
+    private static func validate(_ buffer: UnsafeRawBufferPointer, _ offset: Int, _ segmentLength: Int) throws {
+        guard segmentLength > 11, offset >= 0, offset + segmentLength <= buffer.count else {
             throw macSubtitleOCRError.invalidODSDataLength(length: segmentLength)
         }
-        try parseODS(buffer, offset, segmentLength)
     }
 
     /// Decodes the run-length encoded (RLE) image data
@@ -41,7 +45,7 @@ struct ODS {
 
     // Parses the Object Definition Segment (ODS) to extract the subtitle image bitmap.
     // ODS structure (simplified):
-    //   0x17: Segment Type; already checked by the caller
+    //   0x15: Segment Type; already checked by the caller
     //   2 bytes: Object ID (unused by us)
     //   1 byte: Version number (unused by us)
     //   1 byte: Sequence flag (0x80: First in sequence, 0x40: Last in sequence,

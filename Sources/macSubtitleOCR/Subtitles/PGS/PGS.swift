@@ -16,6 +16,10 @@ struct PGS {
     private let logger = Logger(subsystem: "com.ecdye.macSubtitleOCR", category: "PGS")
     private let pgsHeaderLength = 13
 
+    /// Video dimensions from the most recent presentation composition segment.
+    private var videoWidth = 0
+    private var videoHeight = 0
+
     // MARK: - Lifecycle
 
     init(_ url: URL) throws {
@@ -41,7 +45,9 @@ struct PGS {
             logger.debug("Parsing subtitle at offset: \(offset)")
             guard let subtitle = try parseNextSubtitle(buffer, &offset)
             else {
-                if offset + pgsHeaderLength > buffer.count { break }
+                if offset + pgsHeaderLength > buffer.count {
+                    break
+                }
                 continue
             }
 
@@ -52,7 +58,8 @@ struct PGS {
         }
     }
 
-    private func parseNextSubtitle(_ buffer: UnsafeRawBufferPointer, _ offset: inout Int) throws -> Subtitle? {
+    private mutating func parseNextSubtitle(_ buffer: UnsafeRawBufferPointer,
+                                            _ offset: inout Int) throws -> Subtitle? {
         var hasMultipleODS = false
         var ods: ODS?
         var pds: PDS?
@@ -70,7 +77,14 @@ struct PGS {
             // End of stream check
             guard segmentType != 0x80, segmentLength != 0 else { return nil }
 
-            // Parse the segment based on the type (0x14 for PCS, 0x15 for WDS, 0x16 for PDS, 0x17 for ODS)
+            guard offset + segmentLength <= buffer.count else {
+                print("Segment of length \(segmentLength) extends past the end of the stream, " +
+                    "abandoning remaining segments!", to: &stderr)
+                offset = buffer.count
+                return nil
+            }
+
+            // Parse the segment based on the type (0x14 for PDS, 0x15 for ODS, 0x16 for PCS, 0x17 for WDS)
             switch segmentType {
             case 0x14:
                 do {
@@ -83,6 +97,9 @@ struct PGS {
                 }
             case 0x15:
                 do {
+                    guard segmentLength > 11 else {
+                        throw macSubtitleOCRError.invalidODSDataLength(length: segmentLength)
+                    }
                     if buffer[offset + 3] == 0x80 {
                         ods = try ODS(buffer, offset, segmentLength)
                         offset += segmentLength
@@ -91,7 +108,9 @@ struct PGS {
                     } else if hasMultipleODS {
                         try ods!.appendSegment(buffer, offset, segmentLength)
                         offset += segmentLength
-                        if buffer[offset - 10] != 0x40 { break }
+                        if buffer[offset - 10] != 0x40 {
+                            break
+                        }
                     } else {
                         ods = try ODS(buffer, offset, segmentLength)
                         offset += segmentLength
@@ -101,7 +120,15 @@ struct PGS {
                     offset = buffer.count
                     continue
                 }
-            case 0x16, 0x17:
+            case 0x16:
+                // Presentation Composition Segment: only the leading video descriptor is of use, and it
+                // bounds the size of every object in the display set.
+                if segmentLength >= 4 {
+                    videoWidth = Int(buffer.loadUnaligned(fromByteOffset: offset, as: UInt16.self).bigEndian)
+                    videoHeight = Int(buffer.loadUnaligned(fromByteOffset: offset + 2, as: UInt16.self).bigEndian)
+                }
+                offset += segmentLength
+            case 0x17:
                 offset += segmentLength
             default:
                 logger.warning("Unknown segment type: \(segmentType.hex()), skipping...")
@@ -110,6 +137,7 @@ struct PGS {
             }
 
             guard let pds, let ods else { continue }
+            try checkObjectDimensions(of: ods)
             offset += pgsHeaderLength // Skip the end segment
             return try Subtitle(
                 index: subtitles.count + 1,
@@ -122,8 +150,26 @@ struct PGS {
         }
     }
 
-    private func getSegmentTimestamp(from pointer: UnsafeRawBufferPointer, offset: Int) -> TimeInterval {
-        TimeInterval(pointer.loadUnaligned(fromByteOffset: offset + 2, as: UInt32.self).bigEndian) / 90000
+    /// Rejects an object that is too large to belong to the video it is composited onto.
+    ///
+    /// Decoding fills a buffer of `objectWidth * objectHeight`, both of which are 16 bit fields, so an
+    /// object claiming dimensions the video cannot hold would reserve far more memory than the stream
+    /// could ever describe. Empty objects are left to the placeholder path that already handles them.
+    private func checkObjectDimensions(of ods: ODS) throws {
+        guard videoWidth > 0, videoHeight > 0 else { return }
+        guard ods.objectWidth <= videoWidth, ods.objectHeight <= videoHeight else {
+            throw macSubtitleOCRError.invalidODSDimensions(
+                "Object of \(ods.objectWidth)x\(ods.objectHeight) does not fit the " +
+                    "\(videoWidth)x\(videoHeight) video")
+        }
+    }
+
+    /// Reads the presentation timestamp from the segment header at `offset`, or nil if the header is
+    /// not fully present. A missing end timestamp is filled in from the following subtitle when the SRT
+    /// is written.
+    private func getSegmentTimestamp(from pointer: UnsafeRawBufferPointer, offset: Int) -> TimeInterval? {
+        guard offset >= 0, offset + 6 <= pointer.count else { return nil }
+        return TimeInterval(pointer.loadUnaligned(fromByteOffset: offset + 2, as: UInt32.self).bigEndian) / 90000
     }
 
     private func getSegmentLength(from pointer: UnsafeRawBufferPointer, offset: Int) -> Int {

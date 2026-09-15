@@ -25,4 +25,11 @@ struct SubtitleLine {
     let width: Int
     let y: Int
     let height: Int
+
+    /// The other readings the recognizer returned for this line, in its own order of preference.
+    ///
+    /// Recognition confidence is no guide to whether a line is right: a line can be reported at full
+    /// confidence and still be wrong. Carrying the alternates lets a later pass correct a line by
+    /// choosing among readings the recognizer actually saw rather than inventing one.
+    let alternates: [String]
 }

@@ -211,7 +211,7 @@ struct VobSubParser {
     }
 
     private func decodeImage() throws {
-        var rleData = RLEData(
+        let rleData = RLEData(
             data: subtitle.imageData ?? Data(),
             width: subtitle.imageWidth ?? 0,
             height: subtitle.imageHeight ?? 0,

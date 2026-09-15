@@ -39,7 +39,8 @@ struct macSubtitleOCRFileHandler {
                         "x": line.x,
                         "width": line.width,
                         "y": line.y,
-                        "height": line.height
+                        "height": line.height,
+                        "alternates": line.alternates
                     ] as [String: Any]
                 },
                 "text": jsonResult.text

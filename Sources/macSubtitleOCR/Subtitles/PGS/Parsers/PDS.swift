@@ -18,7 +18,7 @@ struct PDS {
 
     init(_ buffer: UnsafeRawBufferPointer, _ offset: Int, _ segmentLength: Int) throws {
         let count = buffer.count - offset
-        guard count >= 7, (segmentLength - 2) % 5 == 0 else {
+        guard count >= 7, segmentLength <= count, (segmentLength - 2) % 5 == 0 else {
             throw macSubtitleOCRError.invalidPDSDataLength(length: count)
         }
         parsePDS(buffer, offset, segmentLength)
@@ -28,7 +28,7 @@ struct PDS {
 
     /// Parses the Palette Definition Segment (PDS) to extract the RGBA palette.
     /// PDS structure:
-    ///   1 byte: Segment Type (0x16); already checked by the caller
+    ///   1 byte: Segment Type (0x14); already checked by the caller
     ///   1 byte: Palette ID (unused by us)
     ///   1 byte: Palette Version (unused by us)
     ///   Followed by a series of palette entries:

@@ -42,7 +42,8 @@ struct macSubtitleOCR: AsyncParsableCommand {
             let results = try await processInput()
             try await saveResults(fileHandler: fileHandler, results: results)
         } catch let macSubtitleOCRError.fileReadError(string), let macSubtitleOCRError.invalidInputFile(string),
-                let macSubtitleOCRError.ffmpegError(string), let macSubtitleOCRError.invalidRLE(string) {
+                let macSubtitleOCRError.ffmpegError(string), let macSubtitleOCRError.invalidRLE(string),
+                let macSubtitleOCRError.invalidODSDimensions(string) {
             print("Error: \(string), exiting...", to: &stderr)
         } catch {
             print("Error: \(error.localizedDescription), exiting...", to: &stderr)
@@ -52,7 +53,7 @@ struct macSubtitleOCR: AsyncParsableCommand {
 
     // MARK: - Methods
 
-    private mutating func processInput() async throws -> [macSubtitleOCRResult] {
+    private func processInput() async throws -> [macSubtitleOCRResult] {
         #if FFMPEG
         if options.ffmpegDecoder {
             try await processFFmpegDecoder()
@@ -64,18 +65,16 @@ struct macSubtitleOCR: AsyncParsableCommand {
         #endif
     }
 
-    private mutating func processInternalDecoder() async throws -> [macSubtitleOCRResult] {
+    private func processInternalDecoder() async throws -> [macSubtitleOCRResult] {
         var results: [macSubtitleOCRResult] = []
 
         if input.hasSuffix(".sub") || input.hasSuffix(".idx") {
             let sub = try VobSub(
                 URL(fileURLWithPath: input.replacingOccurrences(of: ".idx", with: ".sub")),
                 URL(fileURLWithPath: input.replacingOccurrences(of: ".sub", with: ".idx")))
-            let result = try await processSubtitle(sub.subtitles, trackNumber: 0)
+            let result = try await processSubtitle(sub.subtitles, trackNumber: 0,
+                                                   languages: languages(adding: sub.language))
             results.append(result)
-            if sub.language != nil {
-                options.languages += ",\(sub.language!)"
-            }
         } else if input.hasSuffix(".mkv") || input.hasSuffix(".mks") {
             let mkvStream = try MKVSubtitleExtractor(filePath: input)
             try mkvStream.parseTracks(for: ["S_HDMV/PGS", "S_VOBSUB"])
@@ -87,30 +86,29 @@ struct macSubtitleOCR: AsyncParsableCommand {
                         outputDirectory: URL(fileURLWithPath: outputDirectory))
                 }
 
-                if track.language != nil {
-                    options.languages += ",\(track.language!)"
-                }
-
                 if track.codecID == "S_HDMV/PGS" {
                     let pgs: PGS = try track.trackData
                         .withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
                             try PGS(buffer)
                         }
-                    let result = try await processSubtitle(pgs.subtitles, trackNumber: track.trackNumber)
+                    let result = try await processSubtitle(pgs.subtitles, trackNumber: track.trackNumber,
+                                                           languages: languages(adding: track.language))
                     results.append(result)
                 } else if track.codecID == "S_VOBSUB" {
                     let vobSub: VobSub = try track.trackData
                         .withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
                             try VobSub(buffer, track.idxData ?? "")
                         }
-                    let result = try await processSubtitle(vobSub.subtitles, trackNumber: track.trackNumber)
+                    let result = try await processSubtitle(vobSub.subtitles, trackNumber: track.trackNumber,
+                                                           languages: languages(adding: track.language))
                     results.append(result)
                 }
             }
         } else if input.hasSuffix(".sup") {
             // Open the PGS data stream
             let PGS = try PGS(URL(fileURLWithPath: input))
-            let result = try await processSubtitle(PGS.subtitles, trackNumber: 0)
+            let result = try await processSubtitle(PGS.subtitles, trackNumber: 0,
+                                                   languages: options.languages)
             results.append(result)
         } else {
             throw macSubtitleOCRError.invalidInputFile("Invalid input file type \((input as NSString).pathExtension)")
@@ -126,7 +124,8 @@ struct macSubtitleOCR: AsyncParsableCommand {
 
         for result in ffmpeg.subtitleTracks {
             logger.debug("Processing subtitle track: \(result.key)")
-            let result = try await processSubtitle(result.value, trackNumber: result.key)
+            let result = try await processSubtitle(result.value, trackNumber: result.key,
+                                                   languages: options.languages)
             results.append(result)
         }
 
@@ -134,14 +133,26 @@ struct macSubtitleOCR: AsyncParsableCommand {
     }
     #endif
 
-    private func processSubtitle(_ subtitles: [Subtitle], trackNumber: Int) async throws -> macSubtitleOCRResult {
-        let processor = createSubtitleProcessor(subtitles, trackNumber)
+    /// The recognition languages for one track: the requested list plus the track's own language.
+    ///
+    /// Built fresh for each track. Appending onto `options.languages` instead leaves every track
+    /// carrying the languages of the tracks before it, so in a file with several subtitle tracks the
+    /// later ones are recognized with the earlier tracks' languages taking priority.
+    private func languages(adding trackLanguage: String?) -> String {
+        guard let trackLanguage else { return options.languages }
+        return "\(options.languages),\(trackLanguage)"
+    }
+
+    private func processSubtitle(_ subtitles: [Subtitle], trackNumber: Int,
+                                 languages: String) async throws -> macSubtitleOCRResult {
+        let processor = createSubtitleProcessor(subtitles, trackNumber, languages)
         return try await processor.process()
     }
 
-    private func createSubtitleProcessor(_ subtitles: [Subtitle], _ trackNumber: Int) -> SubtitleProcessor {
+    private func createSubtitleProcessor(_ subtitles: [Subtitle], _ trackNumber: Int,
+                                         _ languages: String) -> SubtitleProcessor {
         SubtitleProcessor(for: subtitles, from: trackNumber,
-                          withOptions: options.invert, options.saveImages, options.languages,
+                          withOptions: options.invert, options.saveImages, languages,
                           options.customWords?.split(separator: ",").map(String.init), experimentalOptions.fastMode,
                           experimentalOptions.disableLanguageCorrection, options.disableICorrection,
                           experimentalOptions.forceOldAPI, outputDirectory, options.maxThreads)

@@ -15,22 +15,3 @@ actor SubtitleAccumulator {
         self.json.append(json)
     }
 }
-
-actor AsyncSemaphore {
-    private var permits: Int
-
-    init(limit: Int) {
-        permits = limit
-    }
-
-    func wait() async {
-        while permits <= 0 {
-            await Task.yield()
-        }
-        permits -= 1
-    }
-
-    func signal() {
-        permits += 1
-    }
-}
